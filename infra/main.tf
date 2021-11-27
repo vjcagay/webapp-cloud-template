@@ -16,7 +16,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "ap-northeast-1"
+  region = "ap-northeast-3"
 }
 
 resource "aws_s3_bucket" "s3_bucket" {
