@@ -1,0 +1,90 @@
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@2.0.6
+  terraform: circleci/terraform@3.0.0
+
+jobs:
+  terraform-init-and-plan:
+    executor: 
+      name: terraform/default
+      tag: 1.0.11
+    steps:
+      - checkout
+      - terraform/init:
+          path: ./infra
+      - terraform/plan:
+          path: ./infra
+      - persist_to_workspace:
+          root: .
+          paths:
+            - infra
+  terraform-apply:
+    executor:
+      name: terraform/default
+      tag: 1.0.11
+    steps:
+      - attach_workspace:
+          at: .
+      - terraform/apply:
+          path: ./infra
+  terraform-save-output-to-env:
+    executor: 
+      name: terraform/default
+      tag: 1.0.11
+    steps:
+      - checkout
+      - terraform/init:
+          path: ./infra
+      - run:
+          name: Save Terraform outputs for the next job
+          command: |
+            cd infra
+            touch terraform_output
+            echo "export S3_BUCKET=$(terraform output s3_bucket)" >> terraform_output
+            echo "export CLOUDFRONT_ID=$(terraform output cloudfront_id)" >> terraform_output
+      - persist_to_workspace:
+          root: .
+          paths:
+            - infra
+            - index.html
+  web-app-deploy:
+    executor: aws-cli/default
+    steps:
+      - attach_workspace:
+          at: .
+      - aws-cli/setup
+      - run:
+          name: Sync files to S3
+          command: |
+            source infra/terraform_output
+            aws s3 cp ./index.html s3://$S3_BUCKET
+      - run:
+          name: Invalidate CloudFront
+          command: |
+            source infra/terraform_output
+            aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"
+
+workflows:
+  deploy-infra:
+    jobs:
+      - terraform-init-and-plan
+      - approve-infra-deploy:
+          type: approval
+          requires:
+            - terraform-init-and-plan
+      - terraform-apply:
+          requires:
+            - approve-infra-deploy
+  deploy-web-app:
+    jobs:
+      - approve-web-app-deploy:
+          type: approval
+      - terraform-save-output-to-env:
+          requires:
+            - approve-web-app-deploy
+      - web-app-deploy:
+          requires:
+            - terraform-save-output-to-env
+
+    
